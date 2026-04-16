@@ -1,94 +1,67 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionClient
-from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped
+from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 import time
-import math
 
 
 class PatrolNode(Node):
     def __init__(self):
         super().__init__('patrol_node')
 
-        self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-
         # 航点列表 (x, y, yaw角度)
-        self.waypoints = [
-            (8.90, -2.76, 0.0),
-            (8.72, -6.77, 0.0),
+        self.waypoints_data = [
+            (8.90, -2.76, 0.663, 0.748),
+            (8.72, -6.77, -0.837, 0.547),
         ]
 
-        self.current_waypoint = 0
-        self.scan_duration = 5.0  # 每个航点停留5秒扫描
+        self.navigator = BasicNavigator()
 
         self.get_logger().info(f"Patrol node started with {len(self.waypoints)} waypoints")
         self.get_logger().info("Waiting for Nav2 action server...")
-        self.nav_client.wait_for_server()
+        self.navigator.wait_until_nav2_active()
         self.get_logger().info("Nav2 ready! Starting patrol...")
 
         # 开始巡检
-        self.send_next_waypoint()
+        self.run_patrol()
 
-    def send_next_waypoint(self):
-        if self.current_waypoint >= len(self.waypoints):
-            self.get_logger().info("===== PATROL COMPLETE =====")
-            self.get_logger().info(f"Visited all {len(self.waypoints)} waypoints")
-            return
+    def create_pose(self, x, y, oz, ow):
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.header.stamp = self.navigator.get_clock().now().to_msg()
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        pose.pose.position.z = 0.0
+        pose.pose.orientation.z = oz
+        pose.pose.orientation.w = ow
 
-        x, y, yaw = self.waypoints[self.current_waypoint]
-        self.get_logger().info(
-            f"Navigating to waypoint {self.current_waypoint + 1}/"
-            f"{len(self.waypoints)}: ({x:.2f}, {y:.2f})")
+        return pose
 
-        goal = NavigateToPose.Goal()
-        goal.pose = PoseStamped()
-        goal.pose.header.frame_id = 'map'
-        goal.pose.header.stamp = self.get_clock().now().to_msg()
-        goal.pose.pose.position.x = x
-        goal.pose.pose.position.y = y
-        goal.pose.pose.position.z = 0.0
+    def run_patrol(self):
+        waypoints = [self.create_pose(*wp) for wp in self.waypoints_data]
 
-        # yaw转四元数
-        goal.pose.pose.orientation.z = math.sin(yaw / 2.0)
-        goal.pose.pose.orientation.w = math.cos(yaw / 2.0)
+        self.navigator.follow_waypoints(waypoints)
 
-        self.nav_client.send_goal_async(
-            goal, feedback_callback=self.feedback_callback
-        ).add_done_callback(self.goal_response_callback)
-
-    def goal_response_callback(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().error("Goal rejected!")
-            return
-
-        self.get_logger().info("Goal accepted, navigating...")
-        goal_handle.get_result_async().add_done_callback(self.result_callback)
-
-    def feedback_callback(self, feedback_msg):
-        # 可以在这里打印导航进度
-        pass
-
-    def result_callback(self, future):
-        result = future.result()
-        wp = self.current_waypoint + 1
-
-        self.get_logger().info(
-            f"Arrived at waypoint {wp}/{len(self.waypoints)}")
-        self.get_logger().info(
-            f"Scanning for {self.scan_duration} seconds...")
-
-        # 停留扫描（aruco_detector在后台自动检测）
-        time.sleep(self.scan_duration)
-
-        self.get_logger().info(f"Scan complete at waypoint {wp}")
-
-        # 前往下一个航点
-        self.current_waypoint += 1
-        self.send_next_waypoint()
-
-
+        while not self.navigator.is_task_complete():
+            feedback = self.navigator.get_feedback()
+            if feedback:
+                current = feedback.current_waypoint
+                total = len(waypoints)
+                self.get_logger().info(
+                    f"Progress: waypoint {current + 1}/{total}",
+                    throttle_duration_sec=3)
+            time.sleep(0.5)
+        
+        result = self.navigator.get_result()
+        if result == TaskResult.SUCCEEDED:
+            self.get_logger().info("Patrol completed successfully!")
+        elif result == TaskResult.CANCELED:
+            self.get_logger().warn("Patrol was canceled.")
+        elif result == TaskResult.FAILED:
+            self.get_logger().error("Patrol failed.")
+        else:
+            self.get_logger().error(f"Unknown patrol result: {result}")
+        
 def main(args=None):
     rclpy.init(args=args)
     node = PatrolNode()
