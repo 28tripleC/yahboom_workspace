@@ -13,6 +13,7 @@
   <depend>visualization_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>tf2_ros</depend>
+  <depend>nav2_simple_commander</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -12,7 +12,7 @@ def load_waypoints_from_yaml(path: str) -> list:
     if not os.path.exists(expanded):
         raise FileNotFoundError(f"Waypoints file not found: {expanded}")
     with open(expanded) as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}
     waypoints = data.get('waypoints', [])
     if not waypoints:
         raise ValueError("Waypoints file is empty or has no 'waypoints' key")
