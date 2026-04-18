@@ -27,6 +27,7 @@ setup(
             'aruco_detector = warehouse_vision.aruco_detector:main',
             'calibrate_camera = warehouse_vision.calibrate_camera:main',
             'patrol_node = warehouse_vision.patrol_node:main',
+            'waypoint_recorder = warehouse_vision.waypoint_recorder:main',
         ],
     },
 )
