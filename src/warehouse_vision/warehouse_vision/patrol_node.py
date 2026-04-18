@@ -70,7 +70,7 @@ class PatrolNode(Node):
         if result == TaskResult.SUCCEEDED:
             self.get_logger().info("Patrol completed successfully!")
         elif result == TaskResult.CANCELED:
-            self.get_logger().warn("Patrol was canceled.")
+            self.get_logger().warning("Patrol was canceled.")
         elif result == TaskResult.FAILED:
             self.get_logger().error("Patrol failed.")
         else:
