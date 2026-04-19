@@ -1,9 +1,15 @@
+import glob
 import os
 import threading
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseWithCovarianceStamped
 import yaml
+
+
+def delete_all_waypoints(directory: str):
+    for f in glob.glob(os.path.join(directory, 'waypoints*.yaml')):
+        os.remove(f)
 
 
 def append_waypoint_to_yaml(path: str, x: float, y: float, oz: float, ow: float):
@@ -25,7 +31,17 @@ class WaypointRecorder(Node):
         super().__init__('waypoint_recorder')
 
         self.declare_parameter('waypoints_file', '~/waypoints.yaml')
+        self.declare_parameter('append', False)
+
         self.waypoints_file = self.get_parameter('waypoints_file').get_parameter_value().string_value
+        append_mode = self.get_parameter('append').get_parameter_value().bool_value
+
+        if not append_mode:
+            waypoints_dir = os.path.expanduser(os.path.dirname(self.waypoints_file) or '~')
+            delete_all_waypoints(waypoints_dir)
+            self.get_logger().info("New session: old waypoints files deleted.")
+        else:
+            self.get_logger().info("Append mode: adding to existing waypoints.")
 
         self.current_pose = None
         self.waypoint_count = 0

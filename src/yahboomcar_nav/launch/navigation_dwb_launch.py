@@ -41,10 +41,11 @@ def generate_launch_description():
         #     package='yahboomcar_nav',
         #     executable='stop_car'
         # ) ,
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='radar_link_to_laser_frame',
-            arguments=['0.0', '0.0', '0.0', '0', '0', '0', 'radar_Link', 'laser_frame']
-        ),
+        # laser TF is published by yahboomcar_bringup_launch.py
+        # Node(
+        #     package='tf2_ros',
+        #     executable='static_transform_publisher',
+        #     name='radar_link_to_laser_frame',
+        #     arguments=['0.0', '0.0', '0.0', '0', '0', '3.14159', 'radar_Link', 'laser_frame']
+        # ),
     ])
