@@ -83,7 +83,8 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        node.get_logger().info("Ctrl+C received — canceling navigation and stopping robot.")
+        node.navigator.cancelTask()
     finally:
         node.destroy_node()
         if rclpy.ok():

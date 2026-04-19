@@ -90,7 +90,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.get_logger().info(f"Done. {node.waypoint_count} waypoints saved to {node.waypoints_file}")
+        if rclpy.ok():
+            node.get_logger().info(f"Done. {node.waypoint_count} waypoints saved to {node.waypoints_file}")
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

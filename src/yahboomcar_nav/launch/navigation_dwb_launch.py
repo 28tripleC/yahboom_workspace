@@ -14,7 +14,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
     namespece = LaunchConfiguration('namespece', default='')
     map_yaml_path = LaunchConfiguration(
-        'maps', default=os.path.join('/home/yahboom/yahboomcar_ws/src/yahboomcar_nav', 'maps', 'yahboom_map.yaml')) 
+        'maps', default=os.path.join('/home/ccc/maps', 'main_building_7.yaml'))
     nav2_param_path = LaunchConfiguration('params_file', default=os.path.join(
         package_path, 'params', 'dwb_nav_params.yaml'))
 
@@ -37,14 +37,14 @@ def generate_launch_description():
                 'namespece': namespece,
                 'params_file': nav2_param_path}.items(),
         ),
+        # Node(
+        #     package='yahboomcar_nav',
+        #     executable='stop_car'
+        # ) ,
         Node(
-            package='yahboomcar_nav',
-            executable='stop_car'
-        ) ,
-        Node(
-     package='tf2_ros',
-     executable='static_transform_publisher',
-     name='base_link_to_base_laser',
-     arguments=['-0.0046412', '0' , '0.094079','0','0','0','base_link','laser_frame']
-    )
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='radar_link_to_laser_frame',
+            arguments=['0.0', '0.0', '0.0', '0', '0', '0', 'radar_Link', 'laser_frame']
+        ),
     ])
