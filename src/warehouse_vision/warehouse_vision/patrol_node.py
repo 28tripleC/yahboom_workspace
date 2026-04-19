@@ -52,7 +52,9 @@ class PatrolNode(Node):
         self.get_logger().info(f"Patrol node started with {len(self.waypoints_data)} waypoints")
         self.get_logger().info("Waiting for Nav2 action server...")
         self.navigator.waitUntilNav2Active()
-        self.get_logger().info("Nav2 ready! Starting patrol...")
+        self.get_logger().info("Nav2 ready! Calibrating pose...")
+        self.calibrate_pose()
+        self.get_logger().info("Calibration done. Starting patrol...")
 
         self.run_patrol()
 
@@ -71,6 +73,18 @@ class PatrolNode(Node):
         pose.pose.orientation.z = oz
         pose.pose.orientation.w = ow
         return pose
+
+    def calibrate_pose(self, speed: float = 0.05, duration: float = 1.5):
+        twist = Twist()
+        for direction in (1.0, -1.0):
+            twist.linear.x = direction * speed
+            end = time.time() + duration
+            while time.time() < end:
+                rclpy.spin_once(self, timeout_sec=0)
+                self.cmd_vel_pub.publish(twist)
+                time.sleep(0.1)
+        self.cmd_vel_pub.publish(Twist())
+        time.sleep(0.5)
 
     def rotate_to_yaw(self, target_oz, target_ow):
         target_yaw = 2.0 * math.atan2(target_oz, target_ow)
