@@ -14,7 +14,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
     namespece = LaunchConfiguration('namespece', default='')
     map_yaml_path = LaunchConfiguration(
-        'maps', default=os.path.join('/home/ccc/maps', 'main_building_7.yaml'))
+        'maps', default=os.path.join('/home/ccc/maps', 'map_208.yaml'))
     nav2_param_path = LaunchConfiguration('params_file', default=os.path.join(
         package_path, 'params', 'dwb_nav_params.yaml'))
 
