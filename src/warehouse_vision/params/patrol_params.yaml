@@ -1,0 +1,6 @@
+patrol_node:
+  ros__parameters:
+    waypoints_file: ~/waypoints.yaml
+    scan_duration: 5.0
+    rotation_speed: 0.4
+    yaw_tolerance: 0.15
