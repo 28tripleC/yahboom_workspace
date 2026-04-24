@@ -57,18 +57,10 @@ def generate_launch_description():
         arguments=['0.0', '0.0','0.0','0','0','0','radar_Link','laser_frame']
     )
     
-    base_link_to_camera_tf_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='base_link_to_camera_frame',
-        arguments=['0.092', '0.021', '0.061', '0', '0.3', '0', 'base_link', 'camera_frame']
-    )
-
     return LaunchDescription([
         imu_filter_node,
         ekf_node,
         base_link_to_imu_tf_node,
         radar_to_laser_tf_node,
-        base_link_to_camera_tf_node,
         description_launch
     ])
