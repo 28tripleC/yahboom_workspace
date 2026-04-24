@@ -1,10 +1,15 @@
+import math
 import rclpy
 from rclpy.node import Node
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 import cv2
 import numpy as np
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
-from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Int32
+from std_srvs.srv import Trigger
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from visualization_msgs.msg import Marker, MarkerArray
 import time
 import json
@@ -12,7 +17,6 @@ import os
 from datetime import datetime
 import tf2_ros
 import tf2_geometry_msgs
-from geometry_msgs.msg import TransformStamped
 
 class ArucoDetector(Node):
     def __init__(self):
@@ -29,7 +33,7 @@ class ArucoDetector(Node):
         self.aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
         self.aruco_params = cv2.aruco.DetectorParameters_create()
 
-        calib_file = os.path.expanduser('~/camera_calibration/calib_data.npz')
+        calib_file = os.path.expanduser('~/camera_calibration/calibration_data.npz')
         if os.path.exists(calib_file):
             data = np.load(calib_file)
             self.camera_matrix = data['camera_matrix']
@@ -44,7 +48,7 @@ class ArucoDetector(Node):
             ], dtype=np.float64)
             self.dist_coeffs = np.zeros((4,1), dtype=np.float64)
 
-        self.marker_size = 0.08
+        self.marker_size = 0.06
 
         # 多帧融合
         self.detection_history = {}
@@ -69,12 +73,80 @@ class ArucoDetector(Node):
                 self.baseline = json.load(f)
             self.mode = "inspect"
             self.get_logger().info("Baseline loaded, switching to inspection mode")
+            # Pre-mark all baseline items as Missing — detections upgrade to Normal/Displaced
+            for marker_id, data in self.baseline.items():
+                self.inventory[int(marker_id)] = {**data, "status": "Missing"}
         else:
             self.get_logger().info("No baseline found, starting in registration mode")
 
-        # TF监听器
+        # TF listener
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
+        # Dynamic camera TF (this node owns camera_frame, not bringup)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+        self.base_pitch = 0.3   # physical mount angle (radians)
+        self.current_pitch = self.base_pitch
+        self.create_timer(0.1, self._tf_timer_callback)  # publish TF at 10Hz
+
+        # Servo publisher for vertical camera tilt
+        self.pub_servo_y = self.create_publisher(Int32, 'servo_s2', 10)
+
+        # Manual angle control for testing without patrol_node
+        self.create_subscription(Int32, 'camera_angle', self._manual_angle_callback, 10)
+
+        # Shelf row angles in degrees (positive = tilt up, negative = tilt down)
+        self.declare_parameter('row_angles', [0, 20, 40])
+        self.declare_parameter('scan_duration_per_row', 4.0)
+        self.shelf_rows = self.get_parameter('row_angles').value
+        self.scan_duration_per_row = self.get_parameter('scan_duration_per_row').value
+
+        # Scan service — patrol_node calls this at each waypoint
+        cb_group = ReentrantCallbackGroup()
+        self.create_service(Trigger, 'scan_shelf', self.scan_shelf_callback,
+                            callback_group=cb_group)
+
+        # Only record detections during intentional scans, not while driving
+        self.is_scanning = False
+
+    def _tf_timer_callback(self):
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'base_link'
+        t.child_frame_id = 'camera_frame'
+        t.transform.translation.x = 0.092
+        t.transform.translation.y = 0.021
+        t.transform.translation.z = 0.061
+        half = self.current_pitch / 2.0
+        t.transform.rotation.y = math.sin(half)
+        t.transform.rotation.w = math.cos(half)
+        self.tf_broadcaster.sendTransform(t)
+
+    def set_camera_row(self, servo_angle_deg):
+        msg = Int32()
+        msg.data = int(servo_angle_deg)
+        self.pub_servo_y.publish(msg)
+        self.current_pitch = self.base_pitch + math.radians(servo_angle_deg)
+        time.sleep(0.5)  # wait for servo to reach position
+
+    def scan_shelf_callback(self, request, response):
+        self.get_logger().info(f"Scanning {len(self.shelf_rows)} shelf rows...")
+        self.is_scanning = True
+        for i, servo_angle in enumerate(self.shelf_rows):
+            self.get_logger().info(f"  Row {i+1}: servo={servo_angle}°")
+            self.set_camera_row(servo_angle)
+            time.sleep(self.scan_duration_per_row)
+        self.set_camera_row(0)  # return to center
+        self.is_scanning = False
+        response.success = True
+        response.message = f"Scanned {len(self.shelf_rows)} rows"
+        self.get_logger().info("Shelf scan complete")
+        return response
+
+    def _manual_angle_callback(self, msg):
+        angle = max(-90, min(90, msg.data))  # clamp to safe range
+        self.get_logger().info(f"Manual camera angle: {angle}°")
+        self.set_camera_row(angle)
 
     def transform_to_map(self, tvec, rvec):
         try:
@@ -134,7 +206,7 @@ class ArucoDetector(Node):
                 if len(self.detection_history[marker_id]) > self.history_size:
                     self.detection_history[marker_id].pop(0)
                 
-                avg_tvec = np.mean(self.detection_history[marker_id], axis=0)
+                avg_tvec = np.mean([t for _, t in self.detection_history[marker_id]], axis=0)
                 distance = float(np.linalg.norm(avg_tvec))
 
                 if self.mode == "inspect" and str(marker_id) in self.baseline:
@@ -152,16 +224,19 @@ class ArucoDetector(Node):
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
                 pose_map = self.transform_to_map(tvec, rvec)
-                map_x = 0.0
-                map_y = 0.0
+                map_x = None
+                map_y = None
+                map_z = None
                 if pose_map:
                     map_x = pose_map.position.x
                     map_y = pose_map.position.y
-                    cv2.putText(frame, f"Map:({map_x:.2f},{map_y:.2f})",
+                    map_z = pose_map.position.z
+                    cv2.putText(frame, f"Map:({map_x:.2f},{map_y:.2f},z:{map_z:.2f})",
                                 (cx - 60, cy + 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200, 255), 1)
 
-                self.log_detection(marker_id, item_name, tvec, distance, map_x, map_y)
+                if self.is_scanning:
+                    self.log_detection(marker_id, item_name, tvec, distance, map_x, map_y, map_z)
                 self.get_logger().info(f"Detected {item_name} (ID: {marker_id}) at distance {distance:.2f}m")
 
         mode_text = f"Mode: {self.mode.upper()}"
@@ -187,13 +262,22 @@ class ArucoDetector(Node):
         end_time = time.time()
         self.get_logger().info(f"Processing time: {(end_time - start_time)*1000:.2f} ms")
 
-    def log_detection(self, marker_id, item_name, tvec, distance, map_x, map_y):
+    def log_detection(self, marker_id, item_name, tvec, distance, map_x, map_y, map_z):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if distance > 1.5:
             status = "Out of range"
-        elif abs(tvec[1][0]) > 0.3:
-            status = "Displaced"
+        elif self.mode == "inspect" and str(marker_id) in self.baseline:
+            base = self.baseline[str(marker_id)]
+            if map_x is not None and base.get('map_x') is not None:
+                displacement = math.sqrt(
+                    (map_x - base['map_x'])**2 +
+                    (map_y - base['map_y'])**2 +
+                    (map_z - base.get('map_z', map_z))**2
+                )
+                status = "Displaced" if displacement > 0.15 else "Normal"
+            else:
+                status = "Out of range"  # seen but TF failed, can't compute displacement
         else:
             status = "Normal"
 
@@ -204,8 +288,9 @@ class ArucoDetector(Node):
             "cam_y": float(tvec[1][0]),
             "cam_z": float(tvec[2][0]),
             "distance": float(distance),
-            "map_x": float(map_x),
-            "map_y": float(map_y),
+            "map_x": map_x,
+            "map_y": map_y,
+            "map_z": map_z,
             "status": status,
             "last_seen": now
         }
@@ -220,6 +305,8 @@ class ArucoDetector(Node):
             marker.id = int(marker_id)
             marker.type = Marker.CUBE
             marker.action = Marker.ADD
+            if data["map_x"] is None:
+                continue  # no valid position to display
             marker.pose.position.x = data["map_x"]
             marker.pose.position.y = data["map_y"]
             marker.pose.position.z = 0.1
@@ -235,7 +322,11 @@ class ArucoDetector(Node):
                 marker.color.r = 1.0
                 marker.color.g = 0.5
                 marker.color.b = 0.0
-            else:
+            elif data["status"] == "Missing":
+                marker.color.r = 0.5
+                marker.color.g = 0.0
+                marker.color.b = 0.5
+            else:  # Out of range
                 marker.color.r = 1.0
                 marker.color.g = 0.0
                 marker.color.b = 0.0
@@ -265,6 +356,11 @@ class ArucoDetector(Node):
 
         self.pub_markers.publish(marker_array)
     
+    def save_baseline(self):
+        with open(self.baseline_path, 'w') as f:
+            json.dump(self.inventory, f, indent=2, ensure_ascii=False)
+        self.get_logger().info(f"Baseline saved to {self.baseline_path}")
+
     def save_inventory_report(self):
         report_path = os.path.join(
             self.log_dir,
@@ -275,6 +371,8 @@ class ArucoDetector(Node):
         self.get_logger().info(f"Inventory report saved to {report_path}")
 
     def destroy_node(self):
+        if self.mode == "register":
+            self.save_baseline()
         self.save_inventory_report()
         cv2.destroyAllWindows()
         super().destroy_node()
@@ -282,8 +380,10 @@ class ArucoDetector(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ArucoDetector()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
