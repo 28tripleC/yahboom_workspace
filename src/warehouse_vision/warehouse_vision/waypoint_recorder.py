@@ -12,7 +12,8 @@ def delete_all_waypoints(directory: str):
         os.remove(f)
 
 
-def append_waypoint_to_yaml(path: str, x: float, y: float, oz: float, ow: float):
+def append_waypoint_to_yaml(
+        path: str, x: float, y: float, oz: float, ow: float, shelf_id=None):
     expanded = os.path.expanduser(path)
     if os.path.exists(expanded):
         with open(expanded) as f:
@@ -20,7 +21,10 @@ def append_waypoint_to_yaml(path: str, x: float, y: float, oz: float, ow: float)
     else:
         data = {}
     waypoints = data.get('waypoints', [])
-    waypoints.append({'x': x, 'y': y, 'oz': oz, 'ow': ow})
+    waypoint = {'x': x, 'y': y, 'oz': oz, 'ow': ow}
+    if shelf_id is not None:
+        waypoint['shelf_id'] = shelf_id
+    waypoints.append(waypoint)
     data['waypoints'] = waypoints
     with open(expanded, 'w') as f:
         yaml.dump(data, f, default_flow_style=False)
@@ -56,7 +60,8 @@ class WaypointRecorder(Node):
         self.startup_timer = self.create_timer(5.0, self._check_initial_pose)
 
         self.get_logger().info(f"Waypoint Recorder started. Saving to: {self.waypoints_file}")
-        self.get_logger().info("Drive the car to each waypoint location, then press Enter to save.")
+        self.get_logger().info("Drive to each waypoint, enter shelf ID, then press Enter to save.")
+        self.get_logger().info("Leave shelf ID blank for a waypoint without a marker.")
         self.get_logger().info("Press Ctrl+C to finish.")
 
         self._input_thread = threading.Thread(target=self._input_loop, daemon=True)
@@ -68,7 +73,6 @@ class WaypointRecorder(Node):
     def _check_initial_pose(self):
         if self.current_pose is None:
             self.get_logger().warning(
-                "No /amcl_pose received yet! "
                 "Please set the 2D Pose Estimate in RViz before recording waypoints."
             )
         self.startup_timer.cancel()
@@ -76,26 +80,35 @@ class WaypointRecorder(Node):
     def _input_loop(self):
         while rclpy.ok():
             try:
-                input("")
+                shelf_id_text = input("Shelf ID: ").strip()
             except EOFError:
                 break
-            self._save_current_pose()
+            shelf_id = None
+            if shelf_id_text:
+                try:
+                    shelf_id = int(shelf_id_text)
+                except ValueError:
+                    self.get_logger().warning(f"Invalid shelf ID '{shelf_id_text}', waypoint not saved")
+                    continue
+            self._save_current_pose(shelf_id)
 
-    def _save_current_pose(self):
+    def _save_current_pose(self, shelf_id=None):
         if self.current_pose is None:
-            self.get_logger().warning(
-                "No pose available yet. Set the 2D Pose Estimate in RViz first."
-            )
+            self.get_logger().warning( "No pose available yet. Set the 2D Pose Estimate in RViz first.")
             return
+
         x = self.current_pose.position.x
         y = self.current_pose.position.y
         oz = self.current_pose.orientation.z
         ow = self.current_pose.orientation.w
-        append_waypoint_to_yaml(self.waypoints_file, x, y, oz, ow)
+
+        append_waypoint_to_yaml(self.waypoints_file, x, y, oz, ow, shelf_id)
         self.waypoint_count += 1
+        
+        marker_text = "none" if shelf_id is None else str(shelf_id)
         self.get_logger().info(
-            f"Saved waypoint #{self.waypoint_count} at (x={x:.4f}, y={y:.4f})"
-        )
+            f"Saved waypoint #{self.waypoint_count} at "
+            f"(x={x:.4f}, y={y:.4f}), shelf_id={marker_text}")
 
 
 def main(args=None):
