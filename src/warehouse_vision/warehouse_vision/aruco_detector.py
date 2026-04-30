@@ -7,13 +7,14 @@ import cv2
 import numpy as np
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
-from std_msgs.msg import Int32
+from std_msgs.msg import Int32, String
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from visualization_msgs.msg import Marker, MarkerArray
 import time
 import json
 import os
+import yaml
 from datetime import datetime
 import tf2_ros
 import tf2_geometry_msgs
@@ -27,6 +28,7 @@ class ArucoDetector(Node):
         
         self.pub_img = self.create_publisher(Image, '/aruco_detected_img', 1)
         self.pub_markers = self.create_publisher(MarkerArray, '/inventory_markers', 1)
+        self.pub_visible = self.create_publisher(String, '/aruco_visible_markers', 1)
 
         self.bridge = CvBridge()
 
@@ -83,7 +85,7 @@ class ArucoDetector(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        # Dynamic camera TF (this node owns camera_frame, not bringup)
+        # Dynamic camera TF
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
         self.base_pitch = 0.3   # physical mount angle (radians)
         self.current_pitch = self.base_pitch
@@ -95,13 +97,32 @@ class ArucoDetector(Node):
         # Manual angle control for testing without patrol_node
         self.create_subscription(Int32, 'camera_angle', self._manual_angle_callback, 10)
 
-        # Shelf row angles in degrees (positive = tilt up, negative = tilt down)
+        # Shelf row angles in degrees
         self.declare_parameter('row_angles', [0, 20, 40])
         self.declare_parameter('scan_duration_per_row', 4.0)
         self.shelf_rows = self.get_parameter('row_angles').value
         self.scan_duration_per_row = self.get_parameter('scan_duration_per_row').value
 
-        # Scan service — patrol_node calls this at each waypoint
+        # Load shelf marker IDs from waypoints — only these are published for alignment
+        self.declare_parameter('waypoints_file', '~/waypoints.yaml')
+        waypoints_path = os.path.expanduser(
+            self.get_parameter('waypoints_file').value)
+        self.shelf_ids = set()
+        if os.path.exists(waypoints_path):
+            with open(waypoints_path) as f:
+                wp_data = yaml.safe_load(f) or {}
+            for wp in wp_data.get('waypoints', []):
+                sid = wp.get('shelf_id')
+                if sid is not None:
+                    self.shelf_ids.add(int(sid))
+            self.get_logger().info(
+                f"Tracking shelf markers for alignment: {sorted(self.shelf_ids)}")
+        else:
+            self.get_logger().warn(
+                f"Waypoints file not found at {waypoints_path}; "
+                "publishing all marker angles")
+
+        # Scan service
         cb_group = ReentrantCallbackGroup()
         self.create_service(Trigger, 'scan_shelf', self.scan_shelf_callback,
                             callback_group=cb_group)
@@ -127,7 +148,7 @@ class ArucoDetector(Node):
         msg.data = int(servo_angle_deg)
         self.pub_servo_y.publish(msg)
         self.current_pitch = self.base_pitch + math.radians(servo_angle_deg)
-        time.sleep(0.5)  # wait for servo to reach position
+        time.sleep(0.5)
 
     def scan_shelf_callback(self, request, response):
         self.get_logger().info(f"Scanning {len(self.shelf_rows)} shelf rows...")
@@ -144,7 +165,7 @@ class ArucoDetector(Node):
         return response
 
     def _manual_angle_callback(self, msg):
-        angle = max(-90, min(90, msg.data))  # clamp to safe range
+        angle = max(-90, min(90, msg.data))
         self.get_logger().info(f"Manual camera angle: {angle}°")
         self.set_camera_row(angle)
 
@@ -153,8 +174,8 @@ class ArucoDetector(Node):
             pose_camera = PoseStamped()
             pose_camera.header.frame_id = "camera_frame"
             pose_camera.pose.position.x = float(tvec[2][0]) # 相机Z轴对应物体的前后距离
-            pose_camera.pose.position.y = float(-tvec[0][0]) # 相机Y轴对应物体的左右距离
-            pose_camera.pose.position.z = float(-tvec[1][0]) # 相机X轴对应物体的上下距离
+            pose_camera.pose.position.y = float(-tvec[0][0]) # 相机X轴对应物体的左右距离
+            pose_camera.pose.position.z = float(-tvec[1][0]) # 相机Y轴对应物体的上下距离
             pose_camera.pose.orientation.w = 1.0
 
             transform = self.tf_buffer.lookup_transform("map", "camera_frame", rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.5))
@@ -173,6 +194,8 @@ class ArucoDetector(Node):
 
         corners, ids, rejected = cv2.aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
 
+        visible_for_align = {}  # {id: lateral_angle_rad} — only shelf IDs
+
         if ids is not None:
             cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
@@ -180,7 +203,6 @@ class ArucoDetector(Node):
                 marker_id = ids[i][0]
                 corner = corners[i]
 
-                # 过滤小面积标记
                 area = cv2.contourArea(corner)
                 if area < self.min_marker_area:
                     continue
@@ -196,7 +218,12 @@ class ArucoDetector(Node):
 
                 if not success:
                     continue
-                
+
+                # Lateral angle in ROS frame: left positive (CCW from camera Z axis)
+                lateral_angle = math.atan2(-float(tvec[0][0]), float(tvec[2][0]))
+                if not self.shelf_ids or marker_id in self.shelf_ids:
+                    visible_for_align[int(marker_id)] = lateral_angle
+
                 cv2.drawFrameAxes(frame, self.camera_matrix, self.dist_coeffs, rvec, tvec, 0.05)
 
                 if marker_id not in self.detection_history:
@@ -239,6 +266,14 @@ class ArucoDetector(Node):
                     self.log_detection(marker_id, item_name, tvec, distance, map_x, map_y, map_z)
                 self.get_logger().info(f"Detected {item_name} (ID: {marker_id}) at distance {distance:.2f}m")
 
+        # Publish per-frame visible shelf markers for patrol alignment
+        visible_msg = String()
+        visible_msg.data = json.dumps({
+            "stamp": time.time(),
+            "markers": visible_for_align,
+        })
+        self.pub_visible.publish(visible_msg)
+
         mode_text = f"Mode: {self.mode.upper()}"
         if self.mode == "register":
             mode_color = (0, 255, 255)
@@ -277,7 +312,7 @@ class ArucoDetector(Node):
                 )
                 status = "Displaced" if displacement > 0.15 else "Normal"
             else:
-                status = "Out of range"  # seen but TF failed, can't compute displacement
+                status = "Out of range"
         else:
             status = "Normal"
 
@@ -306,7 +341,7 @@ class ArucoDetector(Node):
             marker.type = Marker.CUBE
             marker.action = Marker.ADD
             if data["map_x"] is None:
-                continue  # no valid position to display
+                continue
             marker.pose.position.x = data["map_x"]
             marker.pose.position.y = data["map_y"]
             marker.pose.position.z = 0.1
@@ -326,7 +361,7 @@ class ArucoDetector(Node):
                 marker.color.r = 0.5
                 marker.color.g = 0.0
                 marker.color.b = 0.5
-            else:  # Out of range
+            else:
                 marker.color.r = 1.0
                 marker.color.g = 0.0
                 marker.color.b = 0.0
