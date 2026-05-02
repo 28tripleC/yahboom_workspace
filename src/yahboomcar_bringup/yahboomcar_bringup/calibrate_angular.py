@@ -4,7 +4,7 @@ from geometry_msgs.msg import Twist, Point,Quaternion
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
-from math import copysign, sqrt, pow,radians
+from math import copysign, sqrt, pow,radians,degrees
 import time
 from rclpy.duration import Duration
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
@@ -19,20 +19,23 @@ class Calibrateangular(Node):
         #create a spublisher
         self.cmd_vel = self.create_publisher(Twist,"cmd_vel",5)
         #declare_parameter
-        self.declare_parameter('test_angle',360.0)
+        self.declare_parameter('test_angle',45.0)
         self.test_angle = self.get_parameter('test_angle').get_parameter_value().double_value
         self.test_angle = radians(self.test_angle)
         
-        self.declare_parameter('speed',2.0)
+        self.declare_parameter('speed',0.3)
         self.speed = self.get_parameter('speed').get_parameter_value().double_value
         
-        self.declare_parameter('tolerance',1.5)
+        self.declare_parameter('tolerance',1.54)
         self.tolerance = self.get_parameter('tolerance').get_parameter_value().double_value
+        self.tolerance = radians(self.tolerance)
         
-        self.declare_parameter('odom_angular_scale_correction',0.75)
+        self.declare_parameter('odom_angular_scale_correction',0.5)
         self.odom_angular_scale_correction = self.get_parameter('odom_angular_scale_correction').get_parameter_value().double_value
         
         self.declare_parameter('start_test',False)
+        self.declare_parameter('max_test_duration',15.0)
+        self.max_test_duration = self.get_parameter('max_test_duration').get_parameter_value().double_value
         
        
         
@@ -60,6 +63,8 @@ class Calibrateangular(Node):
         self.reverse = 1
         self.turn_angle = 0
         self.delta_angle  = 0
+        self.last_start_test = False
+        self.test_start_time = None
         #self.odom_angle = self.get_odom_angle()
         #self.last_angle = self.odom_angle
         self.test_angle *= self.reverse
@@ -73,12 +78,38 @@ class Calibrateangular(Node):
         self.odom_angular_scale_correction = self.get_parameter('odom_angular_scale_correction').get_parameter_value().double_value
         self.test_angle = self.get_parameter('test_angle').get_parameter_value().double_value
         self.test_angle = radians(self.test_angle) #角度转成弧度
+        self.tolerance = self.get_parameter('tolerance').get_parameter_value().double_value
+        self.tolerance = radians(self.tolerance)
         self.speed = self.get_parameter('speed').get_parameter_value().double_value
+        self.max_test_duration = self.get_parameter('max_test_duration').get_parameter_value().double_value
         move_cmd = Twist()
         self.test_angle *= self.reverse
         self.error = self.test_angle - self.turn_angle
         if self.start_test:
+            if not self.last_start_test:
+                self.turn_angle = 0.0
+                self.odom_angle = self.get_odom_angle()
+                self.first_angle = self.odom_angle
+                self.error = self.test_angle
+                self.last_start_test = True
+                self.test_start_time = time.time()
+                print("start odom yaw deg: ", degrees(self.first_angle))
+                print("target angle deg: ", degrees(self.test_angle))
+                print("turn_angle deg: ", degrees(self.turn_angle))
+                return
+
             self.error = self.test_angle - self.turn_angle
+            if self.test_start_time and time.time() - self.test_start_time > self.max_test_duration:
+                self.turn_angle = 0.0
+                self.cmd_vel.publish(Twist())
+                print("timeout stop")
+                self.start_test  = rclpy.parameter.Parameter('start_test',rclpy.Parameter.Type.BOOL,False)
+                all_new_parameters = [self.start_test]
+                self.set_parameters(all_new_parameters)
+                self.last_start_test = False
+                self.test_start_time = None
+                return
+
             if self.start_test and (abs(self.error) > self.tolerance or self.error==0) :
                 #move_cmd.linear.x = 0.2
                 move_cmd.angular.z = copysign(self.speed, self.error)
@@ -88,9 +119,12 @@ class Calibrateangular(Node):
                 self.delta_angle = self.odom_angular_scale_correction * self.normalize_angle(self.odom_angle - self.first_angle)
                 #print("delta_angle: ",self.delta_angle)
                 self.turn_angle += self.delta_angle
-                print("turn_angle: ",self.turn_angle)
+                print("cmd angular z: ", move_cmd.angular.z)
+                print("odom yaw deg: ", degrees(self.odom_angle))
+                print("delta_angle deg: ", degrees(self.delta_angle))
+                print("turn_angle deg: ",degrees(self.turn_angle))
                 self.error = self.test_angle - self.turn_angle
-                print("error: ",self.error)
+                print("error deg: ",degrees(self.error))
                 self.first_angle = self.odom_angle
                 
                 #print("first_angle: ",self.first_angle)
@@ -104,6 +138,8 @@ class Calibrateangular(Node):
                 self.set_parameters(all_new_parameters)
                 self.reverse = -self.reverse
                 self.first_angle = 0
+                self.last_start_test = False
+                self.test_start_time = None
                 
         else:
             #self.error = 0.0
@@ -111,6 +147,8 @@ class Calibrateangular(Node):
             self.start_test  = rclpy.parameter.Parameter('start_test',rclpy.Parameter.Type.BOOL,False)           
             all_new_parameters = [self.start_test]
             self.set_parameters(all_new_parameters)
+            self.last_start_test = False
+            self.test_start_time = None
             
 
 

@@ -8,9 +8,9 @@ patrol_node:
     rotation_start_duration: 0.12
     rotation_kp: 1.0
     rotation_timeout: 15.0
-    odom_angular_scale_correction: 1.1
+    odom_angular_scale_correction: 1.0
     yaw_tolerance: 0.03
-    yaw_rotation_speed: 0.12
+    yaw_rotation_speed: 0.2
     yaw_rotation_kp: 0.8
     aruco_rotation_speed: 0.08
     aruco_rotation_kp: 0.6

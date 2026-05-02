@@ -4,7 +4,8 @@ import tempfile
 import yaml
 
 
-def append_waypoint_to_yaml(path: str, x: float, y: float, oz: float, ow: float):
+def append_waypoint_to_yaml(
+        path: str, x: float, y: float, oz: float, ow: float, shelf_id=None):
     """Mirrors the save logic we'll put in waypoint_recorder.py."""
     expanded = os.path.expanduser(path)
     if os.path.exists(expanded):
@@ -13,7 +14,10 @@ def append_waypoint_to_yaml(path: str, x: float, y: float, oz: float, ow: float)
     else:
         data = {}
     waypoints = data.get('waypoints', [])
-    waypoints.append({'x': x, 'y': y, 'oz': oz, 'ow': ow})
+    waypoint = {'x': x, 'y': y, 'oz': oz, 'ow': ow}
+    if shelf_id is not None:
+        waypoint['shelf_id'] = shelf_id
+    waypoints.append(waypoint)
     data['waypoints'] = waypoints
     with open(expanded, 'w') as f:
         yaml.dump(data, f, default_flow_style=False)
@@ -38,6 +42,16 @@ def test_append_accumulates_waypoints():
             data = yaml.safe_load(f)
         assert len(data['waypoints']) == 2
         assert data['waypoints'][1] == {'x': 3.0, 'y': 4.0, 'oz': -0.5, 'ow': 0.85}
+
+
+def test_append_records_shelf_id():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, 'waypoints.yaml')
+        append_waypoint_to_yaml(path, 1.0, 2.0, 0.0, 1.0, 3)
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        assert data['waypoints'][0] == {
+            'x': 1.0, 'y': 2.0, 'oz': 0.0, 'ow': 1.0, 'shelf_id': 3}
 
 
 def test_append_preserves_existing_waypoints():
