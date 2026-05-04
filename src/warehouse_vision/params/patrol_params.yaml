@@ -14,3 +14,6 @@ patrol_node:
     yaw_rotation_kp: 0.8
     aruco_rotation_speed: 0.08
     aruco_rotation_kp: 0.6
+    camera_nav_tilt: -30
+    camera_align_tilt: 0
+    camera_settle_time: 0.5

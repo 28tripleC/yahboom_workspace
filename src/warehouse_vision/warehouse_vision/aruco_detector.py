@@ -95,7 +95,10 @@ class ArucoDetector(Node):
         self.pub_servo_y = self.create_publisher(Int32, 'servo_s2', 10)
 
         # Manual angle control for testing without patrol_node
-        self.create_subscription(Int32, 'camera_angle', self._manual_angle_callback, 10)
+        camera_cb_group = ReentrantCallbackGroup()
+        self.camera_angle_sub = self.create_subscription(
+            Int32, 'camera_angle', self._manual_angle_callback, 10,
+            callback_group=camera_cb_group)
 
         self.declare_parameter('row_angles', [0, 20, 40])
         self.declare_parameter('scan_duration_per_row', 4.0)
@@ -145,7 +148,9 @@ class ArucoDetector(Node):
     def set_camera_row(self, servo_angle_deg):
         msg = Int32()
         msg.data = int(servo_angle_deg)
-        self.pub_servo_y.publish(msg)
+        for _ in range(5):
+            self.pub_servo_y.publish(msg)
+            time.sleep(0.05)
         self.current_pitch = self.base_pitch + math.radians(servo_angle_deg)
         time.sleep(0.5)
 
@@ -156,7 +161,6 @@ class ArucoDetector(Node):
             self.get_logger().debug(f"Scanning row at servo={servo_angle} deg")
             self.set_camera_row(servo_angle)
             time.sleep(self.scan_duration_per_row)
-        self.set_camera_row(0)  # return to center
         self.is_scanning = False
         response.success = True
         response.message = f"Scanned {len(self.shelf_rows)} rows"

@@ -9,7 +9,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
-from std_msgs.msg import String
+from std_msgs.msg import Int32, String
 from std_srvs.srv import Trigger
 
 def load_waypoints_from_yaml(path: str) -> list:
@@ -50,6 +50,9 @@ class PatrolNode(Node):
         self.declare_parameter('aruco_read_timeout', 1.0)
         self.declare_parameter('aruco_rotation_speed', 0.08)
         self.declare_parameter('aruco_rotation_kp', 0.6)
+        self.declare_parameter('camera_nav_tilt', -30)
+        self.declare_parameter('camera_align_tilt', 0)
+        self.declare_parameter('camera_settle_time', 0.5)
 
         waypoints_file = self.get_parameter('waypoints_file').value
         self.scan_duration = self.get_parameter('scan_duration').value
@@ -75,6 +78,9 @@ class PatrolNode(Node):
         self.aruco_read_timeout = self.get_parameter('aruco_read_timeout').value
         self.aruco_rotation_speed = self.get_parameter('aruco_rotation_speed').value
         self.aruco_rotation_kp = self.get_parameter('aruco_rotation_kp').value
+        self.camera_nav_tilt = self.get_parameter('camera_nav_tilt').value
+        self.camera_align_tilt = self.get_parameter('camera_align_tilt').value
+        self.camera_settle_time = self.get_parameter('camera_settle_time').value
 
         try:
             self.waypoints_data = load_waypoints_from_yaml(waypoints_file)
@@ -90,6 +96,7 @@ class PatrolNode(Node):
         self.current_odom_yaw = None
 
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.camera_angle_pub = self.create_publisher(Int32, '/camera_angle', 10)
         self.create_subscription(
             PoseWithCovarianceStamped, '/amcl_pose',
             self._pose_callback, 10)
@@ -109,6 +116,7 @@ class PatrolNode(Node):
     def start(self):
         self.get_logger().info(
             f"Patrol node: {len(self.waypoints_data)} waypoints loaded")
+        self.set_camera_navigation_pose()
         self.get_logger().info("Waiting for Nav2...")
         self.navigator.waitUntilNav2Active()
         self.get_logger().info("Nav2 ready!")
@@ -153,6 +161,33 @@ class PatrolNode(Node):
             except Exception:
                 break
             time.sleep(0.05)
+
+    def set_camera_tilt(self, servo_angle_deg, label):
+        msg = Int32()
+        msg.data = int(servo_angle_deg)
+        self.get_logger().debug(
+            f"Setting camera {label} tilt: {msg.data} deg")
+
+        wait_until = time.time() + 2.0
+        while (self.camera_angle_pub.get_subscription_count() == 0 and
+               time.time() < wait_until and self.is_running):
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+        if self.camera_angle_pub.get_subscription_count() == 0:
+            self.get_logger().warn(
+                "No subscriber on /camera_angle; aruco_detector may not receive camera command")
+
+        for _ in range(5):
+            self.camera_angle_pub.publish(msg)
+            rclpy.spin_once(self, timeout_sec=0)
+            time.sleep(0.05)
+        time.sleep(self.camera_settle_time)
+
+    def set_camera_navigation_pose(self):
+        self.set_camera_tilt(self.camera_nav_tilt, 'navigation')
+
+    def set_camera_alignment_pose(self):
+        self.set_camera_tilt(self.camera_align_tilt, 'alignment')
 
     def move(self, linear, angular, duration):
         twist = Twist()
@@ -410,6 +445,7 @@ class PatrolNode(Node):
             self.get_logger().info(
                 f"=== Waypoint {wp_num}/{total}: ({x:.2f}, {y:.2f}) ===")
 
+            self.set_camera_navigation_pose()
             goal_pose = self.create_pose(x, y, 0.0, 1.0)
             self.navigator.goToPose(goal_pose)
             time.sleep(1.0)
@@ -439,6 +475,9 @@ class PatrolNode(Node):
                     f"Failed to reach waypoint {wp_num}")
                 continue
 
+            self.stop_robot(duration=0.5)
+            self.set_camera_alignment_pose()
+
             # Rotate to face target direction(roughly towards shelf)
             self.rotate_to_yaw(oz, ow)
 
@@ -455,6 +494,8 @@ class PatrolNode(Node):
                 self.get_logger().warn(
                     "scan_shelf service unavailable, waiting fallback...")
                 time.sleep(self.scan_duration)
+
+            self.set_camera_navigation_pose()
 
         if self.is_running:
             self.get_logger().info("Patrol complete")
