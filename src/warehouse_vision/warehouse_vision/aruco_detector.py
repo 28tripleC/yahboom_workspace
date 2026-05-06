@@ -262,7 +262,7 @@ class ArucoDetector(Node):
                             (cx - 60, cy + 20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-                pose_map = self.transform_to_map(tvec, rvec)
+                pose_map = self.transform_to_map(avg_tvec, rvec)
                 map_x = None
                 map_y = None
                 map_z = None
@@ -275,7 +275,7 @@ class ArucoDetector(Node):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200, 255), 1)
 
                 if self.is_scanning:
-                    self.log_detection(marker_id, item_name, tvec, distance, map_x, map_y, map_z)
+                    self.log_detection(marker_id, item_name, avg_tvec, distance, map_x, map_y, map_z)
                 self.get_logger().info(f"Detected {item_name} (ID: {marker_id}) at distance {distance:.2f}m")
 
         # Publish per-frame visible shelf markers for patrol alignment
