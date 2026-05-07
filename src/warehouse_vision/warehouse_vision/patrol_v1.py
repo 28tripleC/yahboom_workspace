@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import signal
@@ -8,6 +9,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+from std_msgs.msg import Int32, String
 from std_srvs.srv import Trigger
 
 def load_waypoints_from_yaml(path: str) -> list:
@@ -19,7 +21,8 @@ def load_waypoints_from_yaml(path: str) -> list:
     waypoints = data.get('waypoints', [])
     if not waypoints:
         raise ValueError("No waypoints found in file")
-    return [(wp['x'], wp['y'], wp['oz'], wp['ow']) for wp in waypoints]
+    return [(wp['x'], wp['y'], wp['oz'], wp['ow'], wp.get('shelf_id'))
+            for wp in waypoints]
 
 class PatrolNode(Node):
     def __init__(self):
@@ -28,21 +31,58 @@ class PatrolNode(Node):
         self.declare_parameter('waypoints_file', '~/waypoints.yaml')
         self.declare_parameter('scan_duration', 5.0)
         self.declare_parameter('rotation_speed', 0.3)
-        self.declare_parameter('rotation_min_speed', 0.08)
+        self.declare_parameter('rotation_min_speed', 0.028)
+        self.declare_parameter('rotation_start_speed', 0.08)
+        self.declare_parameter('rotation_start_duration', 0.2)
         self.declare_parameter('rotation_kp', 1.2)
+        self.declare_parameter('rotation_coast_time', 0.15)
         self.declare_parameter('rotation_timeout', 8.0)
+        self.declare_parameter('angular_accel_limit', 2.0)
         self.declare_parameter('odom_angular_scale_correction', 1.0)
         self.declare_parameter('yaw_tolerance', 0.08)
+        self.declare_parameter('yaw_rotation_speed', 0.12)
+        self.declare_parameter('yaw_rotation_kp', 0.8)
+        self.declare_parameter('aruco_align_enabled', True)
+        self.declare_parameter('aruco_align_tolerance', 0.035)
+        self.declare_parameter('aruco_align_max_iters', 3)
+        self.declare_parameter('aruco_settle_time', 0.4)
+        self.declare_parameter('aruco_stale_threshold', 0.3)
+        self.declare_parameter('aruco_sweep_angle', 0.26)
+        self.declare_parameter('aruco_read_timeout', 1.0)
+        self.declare_parameter('aruco_rotation_speed', 0.08)
+        self.declare_parameter('aruco_rotation_kp', 0.6)
+        self.declare_parameter('camera_nav_tilt', -30)
+        self.declare_parameter('camera_align_tilt', 0)
+        self.declare_parameter('camera_settle_time', 0.5)
 
         waypoints_file = self.get_parameter('waypoints_file').value
         self.scan_duration = self.get_parameter('scan_duration').value
         self.rotation_speed = self.get_parameter('rotation_speed').value
         self.rotation_min_speed = self.get_parameter('rotation_min_speed').value
+        self.rotation_start_speed = self.get_parameter('rotation_start_speed').value
+        self.rotation_start_duration = (
+            self.get_parameter('rotation_start_duration').value)
         self.rotation_kp = self.get_parameter('rotation_kp').value
+        self.rotation_coast_time = self.get_parameter('rotation_coast_time').value
         self.rotation_timeout = self.get_parameter('rotation_timeout').value
+        self.angular_accel_limit = self.get_parameter('angular_accel_limit').value
         self.odom_angular_scale_correction = (
             self.get_parameter('odom_angular_scale_correction').value)
         self.yaw_tolerance = self.get_parameter('yaw_tolerance').value
+        self.yaw_rotation_speed = self.get_parameter('yaw_rotation_speed').value
+        self.yaw_rotation_kp = self.get_parameter('yaw_rotation_kp').value
+        self.aruco_align_enabled = self.get_parameter('aruco_align_enabled').value
+        self.aruco_tol = self.get_parameter('aruco_align_tolerance').value
+        self.aruco_max_iters = self.get_parameter('aruco_align_max_iters').value
+        self.aruco_settle = self.get_parameter('aruco_settle_time').value
+        self.aruco_stale = self.get_parameter('aruco_stale_threshold').value
+        self.aruco_sweep = self.get_parameter('aruco_sweep_angle').value
+        self.aruco_read_timeout = self.get_parameter('aruco_read_timeout').value
+        self.aruco_rotation_speed = self.get_parameter('aruco_rotation_speed').value
+        self.aruco_rotation_kp = self.get_parameter('aruco_rotation_kp').value
+        self.camera_nav_tilt = self.get_parameter('camera_nav_tilt').value
+        self.camera_align_tilt = self.get_parameter('camera_align_tilt').value
+        self.camera_settle_time = self.get_parameter('camera_settle_time').value
 
         try:
             self.waypoints_data = load_waypoints_from_yaml(waypoints_file)
@@ -58,6 +98,7 @@ class PatrolNode(Node):
         self.current_odom_yaw = None
 
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.camera_angle_pub = self.create_publisher(Int32, '/camera_angle', 10)
         self.create_subscription(
             PoseWithCovarianceStamped, '/amcl_pose',
             self._pose_callback, 10)
@@ -65,20 +106,25 @@ class PatrolNode(Node):
             Odometry, '/odom',
             self._odom_callback, 20)
 
+        self.latest_visible = {}
+        self.latest_visible_stamp = 0.0
+        self.create_subscription(
+            String, '/aruco_visible_markers',
+            self._visible_callback, 1)
+
         self.is_running = True
         self.scan_client = self.create_client(Trigger, 'scan_shelf')
 
     def start(self):
         self.get_logger().info(
             f"Patrol node: {len(self.waypoints_data)} waypoints loaded")
+        self.set_camera_navigation_pose()
         self.get_logger().info("Waiting for Nav2...")
         self.navigator.waitUntilNav2Active()
         self.get_logger().info("Nav2 ready!")
 
         self.calibrate_amcl()
         self.run_patrol()
-
-    # ========== Callbacks ==========
 
     @staticmethod
     def quaternion_to_yaw(q):
@@ -97,8 +143,6 @@ class PatrolNode(Node):
 
     def _odom_callback(self, msg):
         self.current_odom_yaw = self.quaternion_to_yaw(msg.pose.pose.orientation)
-
-    # ========== Robot Control ==========
 
     def create_pose(self, x, y, oz, ow):
         pose = PoseStamped()
@@ -119,6 +163,33 @@ class PatrolNode(Node):
             except Exception:
                 break
             time.sleep(0.05)
+
+    def set_camera_tilt(self, servo_angle_deg, label):
+        msg = Int32()
+        msg.data = int(servo_angle_deg)
+        self.get_logger().debug(
+            f"Setting camera {label} tilt: {msg.data} deg")
+
+        wait_until = time.time() + 2.0
+        while (self.camera_angle_pub.get_subscription_count() == 0 and
+               time.time() < wait_until and self.is_running):
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+        if self.camera_angle_pub.get_subscription_count() == 0:
+            self.get_logger().warn(
+                "No subscriber on /camera_angle; aruco_detector may not receive camera command")
+
+        for _ in range(5):
+            self.camera_angle_pub.publish(msg)
+            rclpy.spin_once(self, timeout_sec=0)
+            time.sleep(0.05)
+        time.sleep(self.camera_settle_time)
+
+    def set_camera_navigation_pose(self):
+        self.set_camera_tilt(self.camera_nav_tilt, 'navigation')
+
+    def set_camera_alignment_pose(self):
+        self.set_camera_tilt(self.camera_align_tilt, 'alignment')
 
     def move(self, linear, angular, duration):
         twist = Twist()
@@ -147,8 +218,6 @@ class PatrolNode(Node):
         while time.time() < end and self.is_running:
             rclpy.spin_once(self, timeout_sec=0.1)
 
-    # ========== Calibration & Alignment ==========
-
     def calibrate_amcl(self):
         self.get_logger().info("Calibrating AMCL pose...")
         self.move(0.08, 0.0, 1.0)
@@ -164,19 +233,19 @@ class PatrolNode(Node):
         self.get_logger().debug(
             f"Rotate target: {math.degrees(target_yaw):.1f} deg (map frame)")
 
+        if self.current_odom_yaw is None:
+            self.get_logger().warn("No odom pose available, skipping rotation")
+            return
+
         self.stop_robot()
         self.wait_for_pose_updates(1.0)
 
         if self.current_yaw is None:
             self.get_logger().warn("No AMCL pose available, skipping rotation")
             return
-        if self.current_odom_yaw is None:
-            self.get_logger().warn("No odom pose available, skipping rotation")
-            return
 
         map_diff = self.normalize_angle(target_yaw - self.current_yaw)
-        last_odom_yaw = self.current_odom_yaw
-        corrected_turn = 0.0
+        final_error = map_diff
         self.get_logger().debug(
             f"Map current={math.degrees(self.current_yaw):.1f} deg, "
             f"target={math.degrees(target_yaw):.1f} deg, "
@@ -186,45 +255,205 @@ class PatrolNode(Node):
             self.get_logger().debug("Yaw already aligned")
             return
 
+        last_odom_yaw = self.current_odom_yaw
+        corrected_turn = 0.0
         twist = Twist()
         deadline = time.time() + self.rotation_timeout
         last_error = map_diff
 
         while time.time() < deadline and self.is_running:
             rclpy.spin_once(self, timeout_sec=0.02)
-            odom_delta = self.normalize_angle(self.current_odom_yaw - last_odom_yaw)
+            odom_delta = self.normalize_angle(
+                self.current_odom_yaw - last_odom_yaw)
             corrected_turn += odom_delta * self.odom_angular_scale_correction
             last_odom_yaw = self.current_odom_yaw
 
             error = map_diff - corrected_turn
-            last_error = error
-
-            if abs(error) < self.yaw_tolerance:
-                self.get_logger().debug("Yaw aligned with odom feedback")
-                break
+            final_error = error
 
             angular = max(
                 self.rotation_min_speed,
-                min(self.rotation_speed, abs(error) * self.rotation_kp))
+                min(self.yaw_rotation_speed, abs(error) * self.yaw_rotation_kp))
+            predicted_stop = angular * self.rotation_coast_time
+
+            if abs(error) < self.yaw_tolerance + predicted_stop:
+                self.get_logger().debug(
+                    f"Yaw aligned by predicted stop, residual={math.degrees(error):.2f} deg")
+                break
+            if error * last_error < 0.0:
+                self.get_logger().debug("Yaw target crossed, stopping turn")
+                break
+
             twist.angular.z = angular if error > 0 else -angular
             self.cmd_vel_pub.publish(twist)
+            last_error = error
             time.sleep(0.02)
 
         self.stop_robot()
+        self.wait_for_pose_updates(1.0)
+        if self.current_yaw is not None:
+            final_error = self.normalize_angle(target_yaw - self.current_yaw)
 
-        if abs(last_error) >= self.yaw_tolerance:
+        if final_error is not None and abs(final_error) >= self.yaw_tolerance:
             self.get_logger().warn(
-                f"Rotation timeout/error: {math.degrees(last_error):.1f}°")
-        else:
-            self.get_logger().debug(
-                f"Yaw done, corrected odom error={math.degrees(abs(last_error)):.1f} deg")
+                f"Rotation timeout/error: {math.degrees(final_error):.1f}°")
+            return
+        self.get_logger().debug(
+            f"Yaw done, corrected error={math.degrees(abs(final_error or 0.0)):.1f} deg")
 
-    # ========== Patrol Logic ==========
+    def _visible_callback(self, msg):
+        try:
+            data = json.loads(msg.data)
+            self.latest_visible = {
+                int(k): float(v) for k, v in data['markers'].items()}
+            self.latest_visible_stamp = float(data['stamp'])
+        except (ValueError, KeyError, TypeError):
+            pass
+
+    def rotate_by_odom(self, delta_yaw, timeout=6.0, tolerance=None, speed_limit=None, kp=None):
+        tolerance = self.yaw_tolerance if tolerance is None else tolerance
+        speed_limit = self.rotation_speed if speed_limit is None else speed_limit
+        kp = self.rotation_kp if kp is None else kp
+
+        if self.current_odom_yaw is None or abs(delta_yaw) < tolerance:
+            return
+
+        last = self.current_odom_yaw
+        turned = 0.0
+        twist = Twist()
+        start_time = time.time()
+        last_error = delta_yaw
+        deadline = time.time() + timeout
+
+        dt = 0.02
+        max_delta = self.angular_accel_limit * dt
+        current_cmd = 0.0
+
+        while time.time() < deadline and self.is_running:
+            rclpy.spin_once(self, timeout_sec=0.02)
+            odom_delta = self.normalize_angle(self.current_odom_yaw - last)
+            turned += odom_delta * self.odom_angular_scale_correction
+            last = self.current_odom_yaw
+            error = delta_yaw - turned
+
+            angular = max(self.rotation_min_speed, min(speed_limit, abs(error) * kp))
+            if (time.time() - start_time < self.rotation_start_duration and abs(turned) < tolerance):
+                angular = max(angular, min(speed_limit, self.rotation_start_speed))
+            predicted_stop = angular * self.rotation_coast_time
+
+            if abs(error) < tolerance + predicted_stop:
+                break
+            if error * last_error < 0.0:
+                break
+
+            target = angular if error > 0 else -angular
+            delta = max(-max_delta, min(max_delta, target - current_cmd))
+            current_cmd += delta
+            twist.angular.z = current_cmd
+            self.cmd_vel_pub.publish(twist)
+            last_error = error
+            time.sleep(dt)
+
+        while abs(current_cmd) > 1e-3 and self.is_running:
+            delta = max(-max_delta, min(max_delta, -current_cmd))
+            current_cmd += delta
+            twist.angular.z = current_cmd
+            self.cmd_vel_pub.publish(twist)
+            time.sleep(dt)
+
+        self.stop_robot()
+
+    def _wait_for_aruco_settle(self):
+        """Let camera/marker callbacks update after motion has stopped."""
+        deadline = time.time() + self.aruco_settle
+        while time.time() < deadline and self.is_running:
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+    def _read_marker_angle(self, shelf_id):
+        """Wait for a fresh post-stop reading; return angle (rad) or None."""
+        settled_at = time.time()
+        end = settled_at + self.aruco_read_timeout
+        frames_seen = 0
+        last_stamp = self.latest_visible_stamp
+        while time.time() < end and self.is_running:
+            rclpy.spin_once(self, timeout_sec=0.05)
+            if self.latest_visible_stamp != last_stamp:
+                frames_seen += 1
+                last_stamp = self.latest_visible_stamp
+            fresh = (self.latest_visible_stamp >= settled_at and
+                     time.time() - self.latest_visible_stamp < self.aruco_stale)
+            if fresh and shelf_id in self.latest_visible:
+                return self.latest_visible[shelf_id]
+        self.get_logger().warn(
+            f"Read failed: {frames_seen} fresh frames in "
+            f"{self.aruco_read_timeout:.1f}s, "
+            f"last visible={list(self.latest_visible.keys())}")
+        return None
+
+    def align_to_marker(self, shelf_id):
+        if not self.aruco_align_enabled:
+            self.get_logger().info("ArUco align disabled, skipping")
+            return
+        if shelf_id is None:
+            self.get_logger().info(
+                "No shelf_id in waypoint, skipping ArUco align")
+            return
+        self.get_logger().info(f"Aligning to shelf marker {shelf_id}")
+
+        self._wait_for_aruco_settle()
+        angle = self._read_marker_angle(shelf_id)
+
+        if angle is None:
+            self.get_logger().warn(
+                f"Marker {shelf_id} not visible, sweeping...")
+            for delta in [self.aruco_sweep,
+                          -2.0 * self.aruco_sweep,
+                          self.aruco_sweep]:
+                self.rotate_by_odom(delta)
+                self._wait_for_aruco_settle()
+                angle = self._read_marker_angle(shelf_id)
+                if angle is not None:
+                    break
+            if angle is None:
+                self.get_logger().warn(
+                    f"Marker {shelf_id} not found, skipping align")
+                return
+
+        for i in range(self.aruco_max_iters):
+            if abs(angle) < self.aruco_tol:
+                self.get_logger().info(
+                    f"Aligned: {math.degrees(angle):.2f}° "
+                    f"(iter {i})")
+                return
+
+            self.get_logger().debug(
+                f"Align iter {i}: marker at {math.degrees(angle):.2f} deg, rotating")
+
+            self.rotate_by_odom(
+                angle,
+                tolerance=self.aruco_tol,
+                speed_limit=self.aruco_rotation_speed,
+                kp=self.aruco_rotation_kp)
+
+            self._wait_for_aruco_settle()
+            new_angle = self._read_marker_angle(shelf_id)
+            if new_angle is None:
+                self.get_logger().warn(
+                    "Lost marker after rotation, stopping align")
+                return
+            angle = new_angle
+        if abs(angle) < self.aruco_tol:
+            self.get_logger().info(
+                f"Aligned: {math.degrees(angle):.2f}° "
+                f"(after {self.aruco_max_iters} iters)")
+            return
+        self.get_logger().warn(
+            f"Max iters reached, residual {math.degrees(angle):.2f}°")
 
     def run_patrol(self):
         total = len(self.waypoints_data)
 
-        for i, (x, y, oz, ow) in enumerate(self.waypoints_data):
+        for i, (x, y, oz, ow, shelf_id) in enumerate(self.waypoints_data):
             if not self.is_running:
                 break
 
@@ -232,6 +461,7 @@ class PatrolNode(Node):
             self.get_logger().info(
                 f"=== Waypoint {wp_num}/{total}: ({x:.2f}, {y:.2f}) ===")
 
+            self.set_camera_navigation_pose()
             goal_pose = self.create_pose(x, y, 0.0, 1.0)
             self.navigator.goToPose(goal_pose)
             time.sleep(1.0)
@@ -261,8 +491,14 @@ class PatrolNode(Node):
                     f"Failed to reach waypoint {wp_num}")
                 continue
 
-            # Rotate to face target direction
+            self.stop_robot(duration=0.5)
+            self.set_camera_alignment_pose()
+
+            # Rotate to face target direction(roughly towards shelf)
             self.rotate_to_yaw(oz, ow)
+
+            # Fine alignment using ArUco marker on shelf
+            self.align_to_marker(shelf_id)
 
             self.get_logger().debug("Triggering shelf scan")
             if self.scan_client.wait_for_service(timeout_sec=2.0):
@@ -275,10 +511,10 @@ class PatrolNode(Node):
                     "scan_shelf service unavailable, waiting fallback...")
                 time.sleep(self.scan_duration)
 
+            self.set_camera_navigation_pose()
+
         if self.is_running:
             self.get_logger().info("Patrol complete")
-
-    # ========== Shutdown ==========
 
     def shutdown(self):
         self.is_running = False

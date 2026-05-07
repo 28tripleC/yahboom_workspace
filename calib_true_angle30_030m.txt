@@ -1,0 +1,59 @@
+[INFO] [1778057754.736055193] [aruco_distance_test]: Loaded calibration: /home/ccc/camera_calibration/calibration_data.npz
+[INFO] [1778057756.071235209] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057756.531826405] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057757.003103481] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057757.497906498] [aruco_distance_test]: id=0, distance=0.2929, z=0.2878
+[INFO] [1778057758.006718468] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057758.497177271] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057758.965193236] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057759.410425679] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057759.900629088] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057760.442089841] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057760.872548733] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057761.317174270] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057761.772046848] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057762.229255867] [aruco_distance_test]: id=0, distance=0.2929, z=0.2878
+[INFO] [1778057762.697002339] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057763.175973637] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057763.646933744] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057764.131110923] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057764.637221297] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057765.170858687] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057765.585063135] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057765.993574688] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057766.456163228] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057766.896346644] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057767.386730938] [aruco_distance_test]: id=0, distance=0.2929, z=0.2878
+[INFO] [1778057767.809196946] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057768.270210713] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057768.652993440] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+[INFO] [1778057769.033457676] [aruco_distance_test]: id=0, distance=0.2923, z=0.2872
+Traceback (most recent call last):
+  File "/home/ccc/ROS/yahboom_ws/install/warehouse_vision/lib/python3.10/site-packages/warehouse_vision/aruco_distance_test.py", line 134, in main
+    rclpy.spin(node)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
+    executor.spin_once()
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 808, in spin_once
+    self._spin_once_impl(timeout_sec)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 797, in _spin_once_impl
+    handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 780, in wait_for_ready_callbacks
+    return next(self._cb_iter)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 681, in _wait_for_ready_callbacks
+    raise ExternalShutdownException()
+rclpy.executors.ExternalShutdownException
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ccc/ROS/yahboom_ws/install/warehouse_vision/lib/warehouse_vision/aruco_distance_test", line 33, in <module>
+    sys.exit(load_entry_point('warehouse-vision==0.0.0', 'console_scripts', 'aruco_distance_test')())
+  File "/home/ccc/ROS/yahboom_ws/install/warehouse_vision/lib/python3.10/site-packages/warehouse_vision/aruco_distance_test.py", line 140, in main
+    rclpy.shutdown()
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
+    _shutdown(context=context)
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
+    return context.shutdown()
+  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
+    self.__context.shutdown()
+rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241

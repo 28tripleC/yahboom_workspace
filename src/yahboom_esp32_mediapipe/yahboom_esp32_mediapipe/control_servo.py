@@ -11,7 +11,7 @@ class Servo_Cotrol(Node):
         self.pub_Servo2 = self.create_publisher(Int32, "servo_s2", 10)
 
         self.PWMServo_X = 0
-        self.PWMServo_Y = 0
+        self.PWMServo_Y = 15
         self.s1_init_angle = Int32()
         self.s1_init_angle.data = self.PWMServo_X
         self.s2_init_angle = Int32()

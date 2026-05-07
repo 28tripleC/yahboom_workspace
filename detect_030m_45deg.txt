@@ -1,0 +1,1 @@
+[INFO] [1778059939.739893251] [aruco_distance_test]: Loaded calibration: /home/ccc/camera_calibration/calibration_data.npz

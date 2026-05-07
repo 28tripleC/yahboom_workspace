@@ -30,6 +30,7 @@ setup(
             'calibrate_camera = warehouse_vision.calibrate_camera:main',
             'patrol_node = warehouse_vision.patrol_node:main',
             'waypoint_recorder = warehouse_vision.waypoint_recorder:main',
+            'aruco_distance_test = warehouse_vision.aruco_distance_test:main',
         ],
     },
 )
