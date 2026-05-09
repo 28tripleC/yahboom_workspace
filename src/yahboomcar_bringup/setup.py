@@ -37,7 +37,8 @@ setup(
         'calibrate_linear_R2 = yahboomcar_bringup.calibrate_linear_R2:main',
         'calibrate_angular_R2 = yahboomcar_bringup.calibrate_angular_R2:main',
         'patrol_4ROS_R2 = yahboomcar_bringup.patrol_4ROS_R2:main',
-        'patrol_a1_R2 = yahboomcar_bringup.patrol_a1_R2:main',   
+        'patrol_a1_R2 = yahboomcar_bringup.patrol_a1_R2:main',
+        'odom_frame_relay = yahboomcar_bringup.odom_frame_relay:main',
         ],
     },
 )

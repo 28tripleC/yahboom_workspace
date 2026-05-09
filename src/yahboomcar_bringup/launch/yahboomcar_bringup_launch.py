@@ -56,9 +56,23 @@ def generate_launch_description():
         name='radar_link_to_laser_frame',
         arguments=['0.0', '0.0','0.0','0','0','0','radar_Link','laser_frame']
     )
+
+    odom_frame_relay_node = Node(
+        package='yahboomcar_bringup',
+        executable='odom_frame_relay',
+        name='odom_frame_relay',
+        output='screen',
+        parameters=[{
+            'input_topic': '/odom_raw',
+            'output_topic': '/odom_fixed',
+            'odom_frame': 'odom',
+            'base_frame': 'base_footprint',
+        }]
+    )
     
     return LaunchDescription([
         imu_filter_node,
+        odom_frame_relay_node,
         ekf_node,
         base_link_to_imu_tf_node,
         radar_to_laser_tf_node,

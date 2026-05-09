@@ -1,60 +1,31 @@
-[WARN] [1778056746.113455937] [aruco_distance_test]: Using default camera parameters
-[INFO] [1778056747.618202884] [aruco_distance_test]: id=0, distance=0.3445, z=0.3349
-[INFO] [1778056748.043711094] [aruco_distance_test]: id=0, distance=0.3445, z=0.3348
-[INFO] [1778056748.568085282] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056748.896594546] [aruco_distance_test]: id=0, distance=0.3445, z=0.3349
-[INFO] [1778056749.200272547] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056749.537003413] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056750.134520356] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056750.525882950] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056750.890857418] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056751.353356173] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056751.879028938] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056752.453872902] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056752.771606462] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056753.087769253] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056753.574834777] [aruco_distance_test]: id=0, distance=0.3445, z=0.3349
-[INFO] [1778056754.069849449] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056754.599100493] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056755.165110804] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056755.749536234] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056756.279206159] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056756.579779471] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056757.056609023] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056757.594861632] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056757.899249385] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056758.521056436] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056758.832171475] [aruco_distance_test]: id=0, distance=0.3449, z=0.3353
-[INFO] [1778056759.136720567] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056759.440925302] [aruco_distance_test]: id=0, distance=0.3455, z=0.3358
-[INFO] [1778056760.017900214] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-[INFO] [1778056760.665917856] [aruco_distance_test]: id=0, distance=0.3453, z=0.3357
-Traceback (most recent call last):
-  File "/home/ccc/ROS/yahboom_ws/install/warehouse_vision/lib/python3.10/site-packages/warehouse_vision/aruco_distance_test.py", line 134, in main
-    rclpy.spin(node)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
-    executor.spin_once()
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 808, in spin_once
-    self._spin_once_impl(timeout_sec)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 797, in _spin_once_impl
-    handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 780, in wait_for_ready_callbacks
-    return next(self._cb_iter)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 681, in _wait_for_ready_callbacks
-    raise ExternalShutdownException()
-rclpy.executors.ExternalShutdownException
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "/home/ccc/ROS/yahboom_ws/install/warehouse_vision/lib/warehouse_vision/aruco_distance_test", line 33, in <module>
-    sys.exit(load_entry_point('warehouse-vision==0.0.0', 'console_scripts', 'aruco_distance_test')())
-  File "/home/ccc/ROS/yahboom_ws/install/warehouse_vision/lib/python3.10/site-packages/warehouse_vision/aruco_distance_test.py", line 140, in main
-    rclpy.shutdown()
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 130, in shutdown
-    _shutdown(context=context)
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/utilities.py", line 58, in shutdown
-    return context.shutdown()
-  File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/context.py", line 102, in shutdown
-    self.__context.shutdown()
-rclpy._rclpy_pybind11.RCLError: failed to shutdown: rcl_shutdown already called on the given context, at ./src/rcl/init.c:241
+[WARN] [1778234513.371713220] [aruco_distance_test]: Using default camera parameters
+[INFO] [1778234513.865043307] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234514.345821748] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234514.872757638] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234515.396924725] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234515.890190607] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234516.349238818] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234516.685726479] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234517.005951963] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234517.534507686] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234518.057908763] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234518.602558645] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234519.132616714] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234519.689398071] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234520.225744621] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234520.526242870] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234520.981919588] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234521.522550296] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234522.083804051] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234522.387445670] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234522.976016799] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234523.506666608] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234523.865014518] [aruco_distance_test]: id=4, distance=0.3561, z=0.3458
+[INFO] [1778234524.388776857] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234524.909967041] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234525.408455141] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234525.930149070] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234526.323976685] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234526.831600711] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234527.401779685] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463
+[INFO] [1778234527.753245639] [aruco_distance_test]: id=4, distance=0.3566, z=0.3463

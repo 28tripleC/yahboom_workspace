@@ -93,8 +93,14 @@ class ArucoDetector(Node):
 
         # Dynamic camera TF
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
-        self.base_pitch = 0.3
-        self.current_pitch = self.base_pitch
+        self.declare_parameter('base_pitch', 0.0)
+        self.base_pitch = self.get_parameter('base_pitch').value
+        self.servo_pitch_map = {
+            0: -0.14,
+            15: -0.35,
+            25: -0.53,
+        }
+        self.current_pitch = self.servo_pitch_map.get(0, self.base_pitch)
         self.create_timer(0.1, self._tf_timer_callback)  # 10Hz发布动态相机TF
 
         # Servo publisher for vertical camera tilt
@@ -111,12 +117,12 @@ class ArucoDetector(Node):
         )
 
         # 分层扫描参数
-        self.declare_parameter('row_angles', [0, 20, 40])
+        self.declare_parameter('row_angles', [0, 15, 25])
         self.declare_parameter('scan_duration_per_row', 4.0)
 
         # Image-Y ROI gate 参数：只接受图像中间 roi_band_frac 的高度区域
         # 0.5 表示只接受中间50%；0.6 表示中间60%
-        self.declare_parameter('roi_band_frac', 0.6)
+        self.declare_parameter('roi_band_frac', 0.55)
 
         self.shelf_rows = self.get_parameter('row_angles').value
         self.scan_duration_per_row = float(
@@ -188,7 +194,23 @@ class ArucoDetector(Node):
             self.pub_servo_y.publish(msg)
             time.sleep(0.05)
 
-        self.current_pitch = self.base_pitch + math.radians(servo_angle_deg)
+        angle_key = int(servo_angle_deg)
+
+        if angle_key in self.servo_pitch_map:
+            self.current_pitch = float(self.servo_pitch_map[angle_key])
+        else:
+            self.current_pitch = self.base_pitch + math.radians(angle_key)
+            self.get_logger().warn(
+                f"No calibrated pitch for servo={angle_key}°, "
+                f"using base_pitch + servo_angle = {self.current_pitch:.3f} rad"
+            )
+
+        self.get_logger().info(
+            f"Camera servo={angle_key}°, "
+            f"current_pitch={self.current_pitch:.3f} rad "
+            f"({math.degrees(self.current_pitch):.1f}°)"
+        )
+
         time.sleep(0.5)
 
     def scan_shelf_callback(self, request, response):
@@ -357,7 +379,12 @@ class ArucoDetector(Node):
                 )
 
                 if not self.shelf_ids or is_shelf_marker:
-                    visible_for_align[marker_id] = lateral_angle
+                    visible_for_align[marker_id] = {
+                        "angle": lateral_angle,
+                        "z": float(tvec[2][0]),
+                        "distance": float(np.linalg.norm(tvec))
+                    }
+
 
                 cx = int(corner[0][:, 0].mean())
                 cy = int(corner[0][:, 1].mean())
@@ -516,7 +543,7 @@ class ArucoDetector(Node):
     def log_detection(self, marker_id, item_name, tvec, distance, map_x, map_y, map_z):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        if distance > 1.5:
+        if float(tvec[2][0]) > 1.5:
             status = "Out of range"
 
         elif self.mode == "inspect" and str(marker_id) in self.baseline:

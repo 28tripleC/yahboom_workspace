@@ -3,17 +3,16 @@ patrol_node:
     waypoints_file: ~/waypoints.yaml
     scan_duration: 5.0
     rotation_speed: 0.25
-    rotation_min_speed: 0.028
-    rotation_start_speed: 0.05
-    rotation_start_duration: 0.12
+    rotation_min_omega: 0.18
+    angular_accel_limit: 2.0
     rotation_kp: 1.0
-    rotation_timeout: 15.0
+    rotation_timeout: 25.0
     odom_angular_scale_correction: 1.0
-    yaw_tolerance: 0.03
-    yaw_rotation_speed: 0.2
-    yaw_rotation_kp: 0.8
-    aruco_rotation_speed: 0.08
-    aruco_rotation_kp: 0.6
+    yaw_tolerance: 0.05
+    aruco_align_tolerance: 0.045
+    aruco_align_max_iters: 4
+    aruco_rotation_speed: 0.16
+    aruco_rotation_kp: 1.2
     camera_nav_tilt: -30
     camera_align_tilt: 0
     camera_settle_time: 0.5
