@@ -58,6 +58,11 @@ class PatrolNode(Node):
         self.declare_parameter('aruco_align_max_iters', 3)
         self.declare_parameter('aruco_rotation_speed', 0.12)
         self.declare_parameter('aruco_rotation_kp', 1.2)
+        self.declare_parameter('aruco_pulse_kick_speed', 0.24)
+        self.declare_parameter('aruco_pulse_kick_duration', 0.7)
+        self.declare_parameter('aruco_pulse_startup_time', 1.0)
+        self.declare_parameter('aruco_pulse_min_duration', 0.8)
+        self.declare_parameter('aruco_pulse_max_duration', 2.2)
         self.declare_parameter('aruco_settle_time', 0.4)
         self.declare_parameter('aruco_stale_threshold', 0.3)
         self.declare_parameter('aruco_sweep_angle', 0.26)
@@ -90,6 +95,16 @@ class PatrolNode(Node):
             'aruco_rotation_speed').value
         self.aruco_rotation_kp = self.get_parameter(
             'aruco_rotation_kp').value
+        self.aruco_pulse_kick_speed = self.get_parameter(
+            'aruco_pulse_kick_speed').value
+        self.aruco_pulse_kick_duration = self.get_parameter(
+            'aruco_pulse_kick_duration').value
+        self.aruco_pulse_startup_time = self.get_parameter(
+            'aruco_pulse_startup_time').value
+        self.aruco_pulse_min_duration = self.get_parameter(
+            'aruco_pulse_min_duration').value
+        self.aruco_pulse_max_duration = self.get_parameter(
+            'aruco_pulse_max_duration').value
         self.aruco_settle = self.get_parameter('aruco_settle_time').value
         self.aruco_stale = self.get_parameter('aruco_stale_threshold').value
         self.aruco_sweep = self.get_parameter('aruco_sweep_angle').value
@@ -520,6 +535,44 @@ class PatrolNode(Node):
         )
         return None
 
+    def _pulse_rotate_for_marker(self, angle):
+        speed = abs(self.aruco_rotation_speed)
+        if speed < 1e-3:
+            self.get_logger().warn("ArUco rotation speed too small, skipping")
+            return
+
+        duration = self.aruco_pulse_startup_time + abs(angle) / speed
+        duration = max(self.aruco_pulse_min_duration, duration)
+        duration = min(self.aruco_pulse_max_duration, duration)
+        angular = speed if angle > 0.0 else -speed
+        kick_speed = max(abs(self.aruco_pulse_kick_speed), speed)
+        kick_angular = kick_speed if angle > 0.0 else -kick_speed
+        kick_duration = min(max(self.aruco_pulse_kick_duration, 0.0), duration)
+        hold_duration = max(0.0, duration - kick_duration)
+
+        self.get_logger().info(
+            f"Visual pulse rotate: angle={math.degrees(angle):.2f}°, "
+            f"kick={kick_angular:.3f}rad/s for {kick_duration:.2f}s, "
+            f"hold={angular:.3f}rad/s for {hold_duration:.2f}s")
+
+        twist = Twist()
+        dt = 0.02
+        end_kick = time.time() + kick_duration
+        while time.time() < end_kick and self.is_running:
+            rclpy.spin_once(self, timeout_sec=0)
+            twist.angular.z = kick_angular
+            self.cmd_vel_pub.publish(twist)
+            time.sleep(dt)
+
+        end_hold = time.time() + hold_duration
+        while time.time() < end_hold and self.is_running:
+            rclpy.spin_once(self, timeout_sec=0)
+            twist.angular.z = angular
+            self.cmd_vel_pub.publish(twist)
+            time.sleep(dt)
+
+        self.stop_robot(duration=0.5)
+
     def align_to_marker(self, shelf_id, allow_sweep=True):
         if not self.aruco_align_enabled:
             self.get_logger().info("ArUco align disabled, skipping")
@@ -553,6 +606,8 @@ class PatrolNode(Node):
                     f"Marker {shelf_id} not found, skipping align")
                 return
 
+        previous_abs_angle = abs(angle)
+        no_progress_count = 0
         for i in range(self.aruco_max_iters):
             if abs(angle) < self.aruco_tol:
                 self.get_logger().info(
@@ -563,11 +618,7 @@ class PatrolNode(Node):
             self.get_logger().info(
                 f"Align iter {i}: marker at {math.degrees(angle):.2f} deg, rotating")
 
-            self.rotate_by_odom(
-                angle,
-                tolerance=self.aruco_tol,
-                speed_limit=self.aruco_rotation_speed,
-                kp=self.aruco_rotation_kp)
+            self._pulse_rotate_for_marker(angle)
 
             self._wait_for_aruco_settle()
             new_angle = self._read_marker_angle(shelf_id)
@@ -575,6 +626,20 @@ class PatrolNode(Node):
                 self.get_logger().warn(
                     "Lost marker after rotation, stopping align")
                 return
+            progress = previous_abs_angle - abs(new_angle)
+            if progress < math.radians(0.5):
+                no_progress_count += 1
+                self.get_logger().warn(
+                    f"Marker angle did not improve enough: "
+                    f"{math.degrees(angle):.2f}° -> "
+                    f"{math.degrees(new_angle):.2f}°")
+                if no_progress_count >= 2:
+                    self.get_logger().warn(
+                        "Visual pulse made no progress twice; stopping align")
+                    return
+            else:
+                no_progress_count = 0
+            previous_abs_angle = abs(new_angle)
             angle = new_angle
         if abs(angle) < self.aruco_tol:
             self.get_logger().info(

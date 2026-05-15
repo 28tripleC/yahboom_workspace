@@ -48,7 +48,7 @@ class PatrolNode(Node):
         self.declare_parameter('scan_duration', 5.0)
         self.declare_parameter('rotation_speed', 0.3)
         self.declare_parameter('rotation_kp', 1.2)
-        self.declare_parameter('rotation_timeout', 15.0)
+        self.declare_parameter('rotation_timeout', 25.0)
         self.declare_parameter('angular_accel_limit', 2.0)
         self.declare_parameter('rotation_min_omega', 0.18)
         self.declare_parameter('odom_angular_scale_correction', 1.0)
@@ -288,8 +288,15 @@ class PatrolNode(Node):
         if self.current_yaw is not None:
             final_error = self.normalize_angle(target_yaw - self.current_yaw)
             if abs(final_error) >= self.yaw_tolerance:
+                reason = result.get('reason', 'unknown') if result else 'none'
+                elapsed = result.get('elapsed', 0.0) if result else 0.0
+                timeout = result.get('timeout', self.rotation_timeout) if result else self.rotation_timeout
+                turned = result.get('turned', 0.0) if result else 0.0
                 self.get_logger().warn(
-                    f"Rotation residual: {math.degrees(final_error):.1f}°")
+                    f"Rotation residual: {math.degrees(final_error):.1f}° "
+                    f"(rotate_reason={reason}, "
+                    f"elapsed={elapsed:.1f}/{timeout:.1f}s, "
+                    f"odom_turned={math.degrees(turned):.1f}°)")
 
     def _visible_callback(self, msg):
         try:
@@ -357,7 +364,8 @@ class PatrolNode(Node):
         turned = 0.0
         twist = Twist()
         last_error = delta_yaw
-        deadline = time.time() + timeout
+        start_time = time.time()
+        deadline = start_time + timeout
 
         dt = 0.02
         max_delta = self.angular_accel_limit * dt
@@ -438,7 +446,21 @@ class PatrolNode(Node):
             time.sleep(dt)
 
         self.stop_robot()
-        return {'reason': reason, 'turned': turned, 'error': error}
+        elapsed = time.time() - start_time
+        log = self.get_logger().warn if reason == 'timeout' else self.get_logger().info
+        log(
+            f"rotate_by_odom finished: reason={reason}, "
+            f"elapsed={elapsed:.1f}/{timeout:.1f}s, "
+            f"target={math.degrees(delta_yaw):.1f}°, "
+            f"turned={math.degrees(turned):.1f}°, "
+            f"error={math.degrees(error):.1f}°")
+        return {
+            'reason': reason,
+            'turned': turned,
+            'error': error,
+            'elapsed': elapsed,
+            'timeout': timeout,
+        }
 
     def _wait_for_aruco_settle(self):
         """Let camera/marker callbacks update after motion has stopped."""
