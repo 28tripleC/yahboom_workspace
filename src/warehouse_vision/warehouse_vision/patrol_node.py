@@ -150,6 +150,10 @@ class PatrolNode(Node):
 
         self.is_running = True
         self.scan_client = self.create_client(Trigger, 'scan_shelf')
+        # Tells aruco_detector which shelf the upcoming scan belongs to, so
+        # detections can be bucketed for per-shelf AMCL drift compensation.
+        self.pub_current_shelf = self.create_publisher(
+            Int32, 'current_shelf_id', 10)
 
     def start(self):
         self.get_logger().info(
@@ -761,6 +765,9 @@ class PatrolNode(Node):
             self.align_to_marker(shelf_id, allow_sweep=False)
 
             self.get_logger().info("Triggering shelf scan")
+            shelf_msg = Int32()
+            shelf_msg.data = int(shelf_id) if shelf_id is not None else -1
+            self.pub_current_shelf.publish(shelf_msg)
             if self.scan_client.wait_for_service(timeout_sec=2.0):
                 future = self.scan_client.call_async(Trigger.Request())
                 while not future.done():

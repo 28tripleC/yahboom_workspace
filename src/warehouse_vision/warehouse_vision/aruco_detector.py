@@ -58,14 +58,11 @@ class ArucoDetector(Node):
 
         self.marker_size = 0.06
 
-        # 多帧融合
         self.detection_history = {}
         self.history_size = 5
 
-        # 面积过滤
         self.min_marker_area = 500
 
-        # 盘点结果
         self.inventory = {}
         self.log_dir = os.path.expanduser('~/warehouse_log')
         os.makedirs(self.log_dir, exist_ok=True)
@@ -79,7 +76,9 @@ class ArucoDetector(Node):
         # ~0.03 m after subtracting per-run median drift).
         self.xy_residual_threshold = 0.15
         self.z_misplacement_threshold = 0.15
-        self.min_anchors_for_drift = 6
+        # Minimum baseline-matched markers (items + shelf marker) needed in
+        # a shelf bucket before we trust its median drift estimate.
+        self.min_shelf_anchors = 6
 
         if os.path.exists(self.baseline_path):
             with open(self.baseline_path, 'r') as f:
@@ -88,7 +87,7 @@ class ArucoDetector(Node):
             self.mode = "inspect"
             self.get_logger().info("Baseline loaded, switching to inspection mode")
 
-            # 先将所有基线货物标记为 Missing，后续检测到再更新为 Normal/Misplaced
+            # Consider all baseline markers missing until detected in this run. During inspect mode, the status of each marker is updated to "Normal" or "Misplaced" when detected, or remains "Missing" if not detected. Markers not in the baseline are classified as "New item" when detected.
             for marker_id, data in self.baseline.items():
                 self.inventory[int(marker_id)] = {**data, "status": "Missing"}
         else:
@@ -108,7 +107,7 @@ class ArucoDetector(Node):
             25: -0.53,
         }
         self.current_pitch = self.servo_pitch_map.get(0, self.base_pitch)
-        self.create_timer(0.1, self._tf_timer_callback)  # 10Hz发布动态相机TF
+        self.create_timer(0.1, self._tf_timer_callback)  
 
         # Servo publisher for vertical camera tilt
         self.pub_servo_y = self.create_publisher(Int32, 'servo_s2', 10)
@@ -128,7 +127,6 @@ class ArucoDetector(Node):
         self.declare_parameter('scan_duration_per_row', 4.0)
 
         # Image-Y ROI gate 参数：只接受图像中间 roi_band_frac 的高度区域
-        # 0.5 表示只接受中间50%；0.6 表示中间60%
         self.declare_parameter('roi_band_frac', 0.55)
 
         self.shelf_rows = self.get_parameter('row_angles').value
@@ -176,6 +174,21 @@ class ArucoDetector(Node):
 
         # Only record detections during intentional scans, not while driving
         self.is_scanning = False
+
+        # Per-shelf drift: patrol_node publishes the shelf_id it's currently
+        # parked in front of before triggering scan_shelf. Each detection
+        # recorded during that scan window is tagged with this id so we can
+        # bucket residuals per shelf during inspect.
+        self.current_shelf_id = None
+        self.create_subscription(
+            Int32,
+            'current_shelf_id',
+            self._current_shelf_callback,
+            10,
+        )
+
+    def _current_shelf_callback(self, msg):
+        self.current_shelf_id = int(msg.data) if msg.data >= 0 else None
 
     def _tf_timer_callback(self):
         t = TransformStamped()
@@ -279,11 +292,6 @@ class ArucoDetector(Node):
             return None
 
     def _inside_vertical_roi(self, frame, corner):
-        """
-        Image-Y ROI gate:
-        只接受图像中间 roi_band_frac 高度区域内的标记。
-        例如 roi_band_frac=0.6，则接受图像高度 20%~80% 区域。
-        """
         h = frame.shape[0]
         cy_pix = float(corner[0][:, 1].mean())
 
@@ -293,9 +301,6 @@ class ArucoDetector(Node):
         return roi_top <= cy_pix <= roi_bottom
 
     def _draw_vertical_roi(self, frame):
-        """
-        在图像上画出ROI上下边界，方便调参。
-        """
         h, w = frame.shape[:2]
         roi_top = int(h * (1.0 - self.roi_band_frac) / 2.0)
         roi_bottom = int(h * (1.0 + self.roi_band_frac) / 2.0)
@@ -345,8 +350,7 @@ class ArucoDetector(Node):
 
                 is_shelf_marker = marker_id in self.shelf_ids
 
-                # ROI gate 只用于主动扫描阶段的普通货物标记
-                # 不过滤 shelf marker，避免影响 align_to_marker()
+                # ROI gate only for non-shelf markers during scanning, to avoid filtering out shelf markers needed for align_to_marker(). During inspect mode we want to accept all detections regardless of ROI to maximize chances of detecting baseline markers for drift compensation, and to detect any new misplaced items that may be outside the usual shelf bounds.
                 if self.is_scanning and not is_shelf_marker:
                     if not self._inside_vertical_roi(frame, corner):
                         cx = int(corner[0][:, 0].mean())
@@ -396,7 +400,11 @@ class ArucoDetector(Node):
                 cx = int(corner[0][:, 0].mean())
                 cy = int(corner[0][:, 1].mean())
 
-                # Shelf markers are landmarks for alignment only
+                # Shelf markers are landmarks for alignment AND drift anchors:
+                # their pose is fixed (shelves don't move), so during scans we
+                # record them in baseline/inventory tagged with kind="shelf"
+                # and shelf_id=marker_id so each shelf has at least one stable
+                # anchor for per-shelf drift estimation.
                 if is_shelf_marker:
                     cv2.drawFrameAxes(
                         frame,
@@ -415,6 +423,21 @@ class ArucoDetector(Node):
                         (255, 200, 0),
                         2
                     )
+
+                    if self.is_scanning:
+                        pose_map = self.transform_to_map(tvec, rvec)
+                        if pose_map is not None:
+                            self.log_detection(
+                                marker_id,
+                                f"Shelf_{marker_id}",
+                                tvec,
+                                float(np.linalg.norm(tvec)),
+                                pose_map.position.x,
+                                pose_map.position.y,
+                                pose_map.position.z,
+                                kind="shelf",
+                                shelf_id=marker_id,
+                            )
                     continue
 
                 cv2.drawFrameAxes(
@@ -547,7 +570,8 @@ class ArucoDetector(Node):
         elapsed_ms = (time.time() - start_time) * 1000.0
         self.get_logger().debug(f"Processing time: {elapsed_ms:.2f} ms")
 
-    def log_detection(self, marker_id, item_name, tvec, distance, map_x, map_y, map_z):
+    def log_detection(self, marker_id, item_name, tvec, distance,
+        map_x, map_y, map_z, kind="item", shelf_id=None):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if float(tvec[2][0]) > 1.5:
@@ -570,6 +594,13 @@ class ArucoDetector(Node):
         else:
             status = "Normal"
 
+        # Resolve shelf_id: caller override > active scan context > existing
+        # baseline (so re-detections during inspect keep their original shelf).
+        if shelf_id is None:
+            shelf_id = self.current_shelf_id
+        if shelf_id is None and str(marker_id) in self.baseline:
+            shelf_id = self.baseline[str(marker_id)].get("shelf_id")
+
         self.inventory[int(marker_id)] = {
             "item_name": item_name,
             "marker_id": int(marker_id),
@@ -581,17 +612,20 @@ class ArucoDetector(Node):
             "map_y": map_y,
             "map_z": map_z,
             "status": status,
-            "last_seen": now
+            "last_seen": now,
+            "kind": kind,
+            "shelf_id": int(shelf_id) if shelf_id is not None else None,
         }
 
     def reclassify_with_drift_compensation(self):
-        # Robust per-run drift estimate: median of (dx, dy) over every
-        # baseline marker we currently see. Median (not mean) so a small
-        # number of genuinely misplaced items don't bias the estimate.
+        # Per-shelf drift estimate: AMCL error varies by region, so each
+        # shelf gets its own median (dx, dy) over the baseline markers
+        # currently visible on it. 
         if self.mode != "inspect" or not self.baseline:
             return
 
-        deltas = []
+        buckets = {}
+        shelf_anchor = {}  # shelf_id -> (dx, dy) from its own shelf marker
         for mid_str, base in self.baseline.items():
             mid = int(mid_str)
             cur = self.inventory.get(mid)
@@ -605,35 +639,55 @@ class ArucoDetector(Node):
             # Normal, hiding the fact that they're Missing.
             if cur.get("status") == "Missing":
                 continue
-            deltas.append((
-                mid,
-                cur["map_x"] - base["map_x"],
-                cur["map_y"] - base["map_y"],
-            ))
+            shelf_id = base.get("shelf_id")
+            if shelf_id is None:
+                shelf_id = cur.get("shelf_id")
+            if shelf_id is None:
+                continue
+            dx = cur["map_x"] - base["map_x"]
+            dy = cur["map_y"] - base["map_y"]
+            buckets.setdefault(int(shelf_id), []).append((mid, dx, dy))
+            # Shelf markers are bolted to the rack; their delta is the
+            # cleanest single-sample drift estimate for that shelf.
+            if cur.get("kind") == "shelf" or base.get("kind") == "shelf":
+                shelf_anchor[int(shelf_id)] = (dx, dy)
 
-        if len(deltas) < self.min_anchors_for_drift:
-            return
+        def _median(values):
+            s = sorted(values)
+            n = len(s)
+            return s[n // 2] if n % 2 else 0.5 * (s[n // 2 - 1] + s[n // 2])
 
-        dxs = sorted(d[1] for d in deltas)
-        dys = sorted(d[2] for d in deltas)
-        n = len(dxs)
-        drift_x = dxs[n // 2] if n % 2 else 0.5 * (dxs[n // 2 - 1] + dxs[n // 2])
-        drift_y = dys[n // 2] if n % 2 else 0.5 * (dys[n // 2 - 1] + dys[n // 2])
+        for shelf_id, deltas in buckets.items():
+            # Prefer the shelf marker as the drift anchor (1 sample is enough
+            # because it can't physically move). Fall back to the item median
+            # only when the shelf marker wasn't detected this run.
+            if shelf_id in shelf_anchor:
+                drift_x, drift_y = shelf_anchor[shelf_id]
+            else:
+                if len(deltas) < self.min_shelf_anchors:
+                    continue
+                drift_x = _median(d[1] for d in deltas)
+                drift_y = _median(d[2] for d in deltas)
 
-        for mid, dx, dy in deltas:
-            cur = self.inventory[mid]
-            base = self.baseline[str(mid)]
-            res_x = dx - drift_x
-            res_y = dy - drift_y
-            xy_residual = math.hypot(res_x, res_y)
-            z_misplacement = abs(cur["map_z"] - base.get("map_z", 0))
-            cur["xy_residual"] = xy_residual
-            cur["status"] = (
-                "Misplaced"
-                if xy_residual > self.xy_residual_threshold
-                or z_misplacement > self.z_misplacement_threshold
-                else "Normal"
-            )
+            for mid, dx, dy in deltas:
+                cur = self.inventory[mid]
+                base = self.baseline[str(mid)]
+                if cur.get("kind") == "shelf":
+                    # Shelf markers are anchors, not inventory items.
+                    continue
+                res_x = dx - drift_x
+                res_y = dy - drift_y
+                xy_residual = math.hypot(res_x, res_y)
+                z_misplacement = abs(cur["map_z"] - base.get("map_z", 0))
+                cur["xy_residual"] = xy_residual
+                cur["shelf_drift_x"] = drift_x
+                cur["shelf_drift_y"] = drift_y
+                cur["status"] = (
+                    "Misplaced"
+                    if xy_residual > self.xy_residual_threshold
+                    or z_misplacement > self.z_misplacement_threshold
+                    else "Normal"
+                )
 
     def publish_markers(self):
         self.reclassify_with_drift_compensation()
